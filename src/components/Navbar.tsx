@@ -2,12 +2,18 @@ import { useState } from 'react';
 import { Button } from "@/components/ui/button";
 import { Menu } from "lucide-react";
 import { useAuth } from '@/context/AuthContext';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 
 const Navbar = () => {
   const [isOpen, setIsOpen] = useState(false);
   const { authState, signOut } = useAuth();
   const isAuthenticated = !!authState.user;
+  const navigate = useNavigate(); // <-- added
+
+  const handleSignOut = async () => {
+    await signOut();
+    navigate("/"); // <-- redirect to home
+  };
 
   return (
     <header className="w-full py-4 bg-white bg-opacity-90 backdrop-blur-sm fixed top-0 left-0 right-0 z-50">
@@ -36,7 +42,7 @@ const Navbar = () => {
               <Button variant="ghost" className="text-neutral-dark hover:text-deep-blue transition-colors" asChild>
                 <Link to="/dashboard">Dashboard</Link>
               </Button>
-              <Button variant="outline" onClick={signOut}>
+              <Button variant="outline" onClick={handleSignOut}>
                 Sign Out
               </Button>
             </>
@@ -104,7 +110,7 @@ const Navbar = () => {
                   variant="outline"
                   className="mt-6 w-full"
                   onClick={() => {
-                    signOut();
+                    handleSignOut();
                     setIsOpen(false);
                   }}
                 >
