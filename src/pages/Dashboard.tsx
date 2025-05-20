@@ -277,9 +277,53 @@ export default function UserDashboard() {
             </div>
           </div>
 
-          {/* ... (rest of your existing JSX remains the same) */}
+ <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
+            <SheetContent side="right" className="w-[360px] sm:w-[400px]">
+              <SheetHeader>
+                <SheetTitle>Edit profile</SheetTitle>
+              </SheetHeader>
+              <ProfileForm
+                profile={profile}
+                setProfile={setProfile}
+                avatarFile={avatarFile}
+                setAvatarFile={setAvatarFile}
+                onSave={saveProfile}
+              />
+            </SheetContent>
+          </Sheet>
+
+          <div className="flex-1 overflow-auto">
+            {tab === "status" && (
+              <Tabs defaultValue="charts">
+                <TabsList className="mb-6">
+                  <TabsTrigger value="charts">Dashboard</TabsTrigger>
+                  <TabsTrigger value="push">Push Test Data</TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="charts">
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                    <BiometricsChart type="gsr" title="GSR" />
+                    <BiometricsChart type="heartbeat" title="Heart Rate" />
+                    <BiometricsChart type="spo2" title="SpO₂" />
+                    <BiometricsChart type="temperature" title="Temperature" />
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="push">
+                  <div className="max-w-xl mx-auto bg-white p-6 rounded-xl shadow">
+                    <h2 className="text-lg font-semibold mb-4">Push Biometric Test Data</h2>
+                    <BiometricsForm />
+                  </div>
+                </TabsContent>
+              </Tabs>
+            )}
+
+            {tab === "exercises" && (<div className="text-lg"><BreathingExercise /></div>)}
+            {tab === "alert" && <div className="text-lg">Coming soon: alert system for extreme biometrics.</div>}
+          </div>
         </main>
       </div>
+
 
       <Footer />
     </div>
