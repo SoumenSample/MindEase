@@ -22,24 +22,37 @@ import { motion } from "framer-motion";
 import ProfileForm from "../components/ProfileForm";
 import BreathingExercise from "@/components/BreathingExercise";
 import Footer from "@/components/Footer";
-import { Menu, X } from "lucide-react";
+import { Menu, X, Bell, BellOff, Phone, User2 } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 
 export default function UserDashboard() {
   const { authState, signOut } = useAuth();
   const [tab, setTab] = useState("status");
-  const [profile, setProfile] = useState({ username: "", age: "", height: "", avatar_url: "" });
+  const [profile, setProfile] = useState({ 
+    username: "", 
+    age: "", 
+    height: "", 
+    avatar_url: "",
+    phone: "",
+    doctor_phone: "",
+    alert_enabled: false,
+    doctor_alert_enabled: false
+  });
   const [avatarFile, setAvatarFile] = useState(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [latestMetrics, setLatestMetrics] = useState(null);
   const [stressScore, setStressScore] = useState(0);
   const [isBlinking, setIsBlinking] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
-  const [stressLogs, setStressLogs] = useState([]);
-  const [timeFilter, setTimeFilter] = useState('24h');
+  const [alertHistory, setAlertHistory] = useState([]);
+  const [manualAlertOpen, setManualAlertOpen] = useState(false);
 
   // Stress state thresholds (match ESP32 values)
   const STRESS_LOW = 0.3;
   const STRESS_HIGH = 0.7;
+  const STRESS_CRITICAL = 0.85; // New threshold for critical alerts
 
   // Blinking effect for moderate stress
   useEffect(() => {
@@ -50,6 +63,15 @@ export default function UserDashboard() {
       return () => clearInterval(interval);
     } else {
       setIsBlinking(false);
+    }
+  }, [stressScore]);
+
+  // Check for high stress and trigger alerts
+  useEffect(() => {
+    if (stressScore >= STRESS_CRITICAL && profile.alert_enabled) {
+      triggerAlert("automatic", "Critical stress level detected");
+    } else if (stressScore >= STRESS_HIGH && profile.alert_enabled) {
+      triggerAlert("automatic", "High stress level detected");
     }
   }, [stressScore]);
 
@@ -66,7 +88,11 @@ export default function UserDashboard() {
         username: data.username ?? "",
         age: data.age?.toString() ?? "",
         height: data.height?.toString() ?? "",
-        avatar_url: data.avatar_url ?? ""
+        avatar_url: data.avatar_url ?? "",
+        phone: data.phone ?? "",
+        doctor_phone: data.doctor_phone ?? "",
+        alert_enabled: data.alert_enabled ?? false,
+        doctor_alert_enabled: data.doctor_alert_enabled ?? false
       });
     }
   };
@@ -75,7 +101,7 @@ export default function UserDashboard() {
     if (!authState.user?.id) return;
     const { data } = await supabase
       .from("biometrics")
-      .select("gsr, heartbeat, spo2, temperature, stress_score, recorded_at")
+      .select("gsr, heartbeat, spo2, temperature, stress_score")
       .eq("user_id", authState.user.id)
       .order("recorded_at", { ascending: false })
       .limit(1)
@@ -87,20 +113,18 @@ export default function UserDashboard() {
     }
   };
 
-  const fetchStressLogs = async () => {
+  const fetchAlertHistory = async () => {
     if (!authState.user?.id) return;
     const { data } = await supabase
-      .from("biometrics")
+      .from("alerts")
       .select("*")
       .eq("user_id", authState.user.id)
-      .gte("stress_score", STRESS_HIGH)
-      .order("recorded_at", { ascending: false })
-      .limit(50);
+      .order("created_at", { ascending: false })
+      .limit(10);
 
-    if (data) setStressLogs(data);
+    if (data) setAlertHistory(data);
   };
 
-  // Calculate stress score matching ESP32 algorithm
   const calculateStressScore = (metrics) => {
     if (!metrics) return 0;
     
@@ -111,37 +135,91 @@ export default function UserDashboard() {
       temperature = 0
     } = metrics;
 
-    // Normalization factors (match ESP32 values)
     const GSR_NORMAL = 1500;
     const HR_NORMAL = 72;
     const TEMP_NORMAL = 36.5;
     const SPO2_NORMAL = 98;
-
-    // Thresholds (match ESP32 values)
     const GSR_THRESHOLD = 2500;
     const HR_THRESHOLD = 80;
     const TEMP_THRESHOLD = 37.2;
     const SPO2_THRESHOLD = 95;
 
-    // Calculate normalized deviations
     const gsrFactor = Math.max(0, gsr - GSR_NORMAL) / (GSR_THRESHOLD - GSR_NORMAL);
     const hrFactor = Math.max(0, heartbeat - HR_NORMAL) / (HR_THRESHOLD - HR_NORMAL);
     const tempFactor = Math.max(0, temperature - TEMP_NORMAL) / (TEMP_THRESHOLD - TEMP_NORMAL);
     const spo2Factor = Math.max(0, SPO2_NORMAL - spo2) / (SPO2_NORMAL - SPO2_THRESHOLD);
     
-    // Weighted stress score (match ESP32 weights)
     return (gsrFactor * 0.3) +
            (hrFactor * 0.25) +
            (tempFactor * 0.2) +
            (spo2Factor * 0.25);
   };
 
+  // Send SMS via API (you'll need to implement or connect to an SMS service)
+  const sendSMS = async (phoneNumber, message) => {
+    // This is a placeholder - implement with your SMS provider API
+    console.log(`Sending SMS to ${phoneNumber}: ${message}`);
+    
+    // Example implementation with Twilio or other SMS service:
+    /*
+    const response = await fetch('/api/send-sms', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ to: phoneNumber, body: message })
+    });
+    return response.ok;
+    */
+    
+    // For demo purposes, we'll just log it
+    return true;
+  };
+
+  const triggerAlert = async (type, reason) => {
+    if (!authState.user?.id) return;
+    
+    const alertData = {
+      user_id: authState.user.id,
+      type,
+      reason,
+      stress_level: stressScore,
+      status: "triggered"
+    };
+
+    // Save alert to database
+    const { error } = await supabase.from("alerts").insert(alertData);
+    
+    if (error) {
+      console.error("Error saving alert:", error);
+      return;
+    }
+
+    // Send SMS to user if alerts are enabled
+    if (profile.alert_enabled && profile.phone) {
+      const userMessage = `MindEase Alert: ${reason}. Your current stress level is ${Math.round(stressScore * 100)}%.`;
+      await sendSMS(profile.phone, userMessage);
+    }
+
+    // Send SMS to doctor if doctor alerts are enabled
+    if (profile.doctor_alert_enabled && profile.doctor_phone) {
+      const doctorMessage = `Patient Alert: ${profile.username || "User"} is experiencing ${reason}. Current stress level: ${Math.round(stressScore * 100)}%.`;
+      await sendSMS(profile.doctor_phone, doctorMessage);
+    }
+
+    // Update alert history
+    fetchAlertHistory();
+    toast.info(`Alert triggered: ${reason}`);
+  };
+
+  const handleManualAlert = () => {
+    triggerAlert("manual", "Manually triggered alert");
+    setManualAlertOpen(false);
+  };
+
   useEffect(() => {
     fetchProfile();
     fetchLatestMetrics();
-    fetchStressLogs();
+    fetchAlertHistory();
     
-    // Set up real-time updates
     const channel = supabase
       .channel('biometrics')
       .on('postgres_changes', {
@@ -151,13 +229,7 @@ export default function UserDashboard() {
         filter: `user_id=eq.${authState.user?.id}`
       }, (payload) => {
         setLatestMetrics(payload.new);
-        const newScore = payload.new.stress_score ?? calculateStressScore(payload.new);
-        setStressScore(newScore);
-        
-        // Add to logs if high stress
-        if (newScore >= STRESS_HIGH) {
-          setStressLogs(prev => [payload.new, ...prev.slice(0, 49)]);
-        }
+        setStressScore(payload.new.stress_score ?? calculateStressScore(payload.new));
       })
       .subscribe();
 
@@ -201,7 +273,11 @@ export default function UserDashboard() {
       username: profile.username.trim(),
       age: Number(profile.age) || null,
       height: Number(profile.height) || null,
-      avatar_url
+      avatar_url,
+      phone: profile.phone,
+      doctor_phone: profile.doctor_phone,
+      alert_enabled: profile.alert_enabled,
+      doctor_alert_enabled: profile.doctor_alert_enabled
     });
 
     if (!error) {
@@ -219,7 +295,6 @@ export default function UserDashboard() {
     window.location.href = "/";
   };
 
-  // Determine stress state based on score
   const getStressState = () => {
     if (stressScore < STRESS_LOW) {
       return {
@@ -233,122 +308,26 @@ export default function UserDashboard() {
         color: isBlinking ? "bg-green-500" : "bg-green-600",
         icon: "🟡"
       };
-    } else {
+    } else if (stressScore < STRESS_CRITICAL) {
       return {
         text: "High Stress 😖",
+        color: "bg-orange-500",
+        icon: "🟠"
+      };
+    } else {
+      return {
+        text: "Critical Stress 🚨",
         color: "bg-red-500",
         icon: "🔴"
       };
     }
   };
 
-  // Filter logs based on time selection
-  const filteredLogs = stressLogs.filter(log => {
-    const logTime = new Date(log.recorded_at).getTime();
-    const now = Date.now();
-    
-    if (timeFilter === '24h') return now - logTime <= 24 * 60 * 60 * 1000;
-    if (timeFilter === 'week') return now - logTime <= 7 * 24 * 60 * 60 * 1000;
-    return true;
-  });
-
   const stressState = getStressState();
-
-  const StressLogComponent = () => (
-    <div className="mt-6 space-y-4">
-      <div className="flex justify-between items-center">
-        <h3 className="text-lg font-semibold">Stress Events Log</h3>
-        <div className="flex gap-2">
-          <Button 
-            variant={timeFilter === '24h' ? 'default' : 'outline'} 
-            size="sm"
-            onClick={() => setTimeFilter('24h')}
-          >
-            Last 24h
-          </Button>
-          <Button 
-            variant={timeFilter === 'week' ? 'default' : 'outline'} 
-            size="sm"
-            onClick={() => setTimeFilter('week')}
-          >
-            Last Week
-          </Button>
-          <Button 
-            variant={timeFilter === 'all' ? 'default' : 'outline'} 
-            size="sm"
-            onClick={() => setTimeFilter('all')}
-          >
-            All Time
-          </Button>
-        </div>
-      </div>
-      
-      {filteredLogs.length === 0 ? (
-        <Card className="p-4 text-center text-gray-500">
-          No high stress events recorded in this period
-        </Card>
-      ) : (
-        <div className="space-y-3">
-          {filteredLogs.map((log, index) => {
-            const severity = log.stress_score >= 0.9 ? 'high' : 
-                           log.stress_score >= 0.7 ? 'medium' : 'low';
-            
-            return (
-              <Card 
-                key={index}
-                className={`p-4 border-l-4 transition-all ${
-                  severity === 'high' ? 'border-red-500 bg-red-50' :
-                  severity === 'medium' ? 'border-orange-500 bg-orange-50' :
-                  'border-yellow-500 bg-yellow-50'
-                }`}
-              >
-                <div className="flex justify-between items-center">
-                  <div>
-                    <p className="font-medium">
-                      {new Date(log.recorded_at).toLocaleString()}
-                    </p>
-                    <p className="text-sm">
-                      Stress level: <span className="font-semibold">{Math.round(log.stress_score * 100)}%</span>
-                    </p>
-                  </div>
-                  <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                    severity === 'high' ? 'bg-red-500 text-white' :
-                    severity === 'medium' ? 'bg-orange-500 text-white' :
-                    'bg-yellow-500 text-gray-800'
-                  }`}>
-                    {severity === 'high' ? 'Severe' : 
-                     severity === 'medium' ? 'High' : 'Elevated'}
-                  </span>
-                </div>
-                <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
-                  <div className="flex items-center gap-1">
-                    <span className="font-medium">HR:</span>
-                    <span>{log.heartbeat} BPM</span>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <span className="font-medium">GSR:</span>
-                    <span>{log.gsr}</span>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <span className="font-medium">Temp:</span>
-                    <span>{log.temperature?.toFixed(1)}°C</span>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <span className="font-medium">SpO2:</span>
-                    <span>{log.spo2}%</span>
-                  </div>
-                </div>
-              </Card>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
 
   return (
     <div className="flex flex-col min-h-screen">
-      {/* Mobile header with hamburger menu */}
+      {/* Mobile header */}
       <div className="lg:hidden flex items-center justify-between p-4 bg-white border-b">
         <Button 
           variant="ghost" 
@@ -361,12 +340,13 @@ export default function UserDashboard() {
         <div className="w-10"></div>
       </div>
 
-      {/* Flex row: sidebar + main content */}
       <div className="flex flex-1">
         {/* Sidebar */}
         <aside className={`${mobileSidebarOpen ? 'block' : 'hidden'} lg:block w-64 bg-white border-r p-4 space-y-4 fixed lg:static h-full z-50 lg:z-auto`}>
           <h1 className="text-xl font-bold mb-4 hidden lg:block">MindEase</h1>
-          {["status", "exercises", "logs"].map((k) => (
+          
+          {/* Navigation */}
+          {["status", "exercises", "alerts"].map((k) => (
             <Button 
               key={k} 
               variant="ghost" 
@@ -379,6 +359,62 @@ export default function UserDashboard() {
               {k[0].toUpperCase() + k.slice(1)}
             </Button>
           ))}
+          
+          {/* Alert Management Section */}
+          <div className="mt-8 p-4 bg-gray-50 rounded-lg">
+            <h3 className="font-semibold flex items-center gap-2 mb-2">
+              <Bell className="w-4 h-4" /> Alert Settings
+            </h3>
+            
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="alerts-toggle">Enable Alerts</Label>
+                <Switch
+                  id="alerts-toggle"
+                  checked={profile.alert_enabled}
+                  onCheckedChange={(checked) => setProfile({...profile, alert_enabled: checked})}
+                />
+              </div>
+              
+              <div className="flex items-center justify-between">
+                <Label htmlFor="doctor-alerts">Doctor Alerts</Label>
+                <Switch
+                  id="doctor-alerts"
+                  checked={profile.doctor_alert_enabled}
+                  onCheckedChange={(checked) => setProfile({...profile, doctor_alert_enabled: checked})}
+                />
+              </div>
+              
+              <Button 
+                variant="destructive" 
+                className="w-full"
+                onClick={() => setManualAlertOpen(true)}
+              >
+                <Bell className="w-4 h-4 mr-2" /> Trigger Manual Alert
+              </Button>
+            </div>
+          </div>
+          
+          {/* Recent Alerts */}
+          <div className="mt-4 p-4 bg-gray-50 rounded-lg">
+            <h3 className="font-semibold flex items-center gap-2 mb-2">
+              <Bell className="w-4 h-4" /> Recent Alerts
+            </h3>
+            <div className="space-y-2 max-h-48 overflow-y-auto">
+              {alertHistory.length > 0 ? (
+                alertHistory.map((alert, index) => (
+                  <div key={index} className="p-2 bg-white rounded border text-sm">
+                    <div className="font-medium">{alert.reason}</div>
+                    <div className="text-xs text-gray-500">
+                      {new Date(alert.created_at).toLocaleString()} • {alert.type}
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="text-sm text-gray-500 p-2">No recent alerts</div>
+              )}
+            </div>
+          </div>
         </aside>
 
         {/* Main content */}
@@ -423,8 +459,9 @@ export default function UserDashboard() {
             </div>
           </div>
 
+          {/* Profile Sheet */}
           <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
-            <SheetContent side="right" className="w-[90vw] sm:w-[360px]">
+            <SheetContent side="right" className="w-[90vw] sm:w-[400px] overflow-y-auto">
               <SheetHeader>
                 <SheetTitle>Edit profile</SheetTitle>
               </SheetHeader>
@@ -435,9 +472,79 @@ export default function UserDashboard() {
                 setAvatarFile={setAvatarFile}
                 onSave={saveProfile}
               />
+              
+              <div className="mt-6 space-y-4">
+                <h3 className="font-semibold">Alert Settings</h3>
+                
+                <div className="space-y-4">
+                  <div>
+                    <Label htmlFor="phone">Your Phone Number</Label>
+                    <Input
+                      id="phone"
+                      type="tel"
+                      value={profile.phone}
+                      onChange={(e) => setProfile({...profile, phone: e.target.value})}
+                      placeholder="+1234567890"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">For receiving alerts</p>
+                  </div>
+                  
+                  <div>
+                    <Label htmlFor="doctor-phone">Doctor's Phone Number</Label>
+                    <Input
+                      id="doctor-phone"
+                      type="tel"
+                      value={profile.doctor_phone}
+                      onChange={(e) => setProfile({...profile, doctor_phone: e.target.value})}
+                      placeholder="+1234567890"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">For emergency alerts</p>
+                  </div>
+                  
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="alerts-toggle">Enable Alerts</Label>
+                    <Switch
+                      id="alerts-toggle"
+                      checked={profile.alert_enabled}
+                      onCheckedChange={(checked) => setProfile({...profile, alert_enabled: checked})}
+                    />
+                  </div>
+                  
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="doctor-alerts">Enable Doctor Alerts</Label>
+                    <Switch
+                      id="doctor-alerts"
+                      checked={profile.doctor_alert_enabled}
+                      onCheckedChange={(checked) => setProfile({...profile, doctor_alert_enabled: checked})}
+                    />
+                  </div>
+                </div>
+              </div>
             </SheetContent>
           </Sheet>
 
+          {/* Manual Alert Dialog */}
+          {manualAlertOpen && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+              <Card className="p-6 w-full max-w-md">
+                <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                  <Bell className="w-5 h-5 text-red-500" />
+                  Trigger Manual Alert
+                </h3>
+                <p className="mb-4">Are you sure you want to send an emergency alert?</p>
+                <div className="flex gap-2 justify-end">
+                  <Button variant="outline" onClick={() => setManualAlertOpen(false)}>
+                    Cancel
+                  </Button>
+                  <Button variant="destructive" onClick={handleManualAlert}>
+                    Send Alert
+                  </Button>
+                </div>
+              </Card>
+            </div>
+          )}
+
+          {/* Tab Content */}
           <div className="flex-1 overflow-auto">
             {tab === "status" && (
               <Tabs defaultValue="charts">
@@ -453,7 +560,6 @@ export default function UserDashboard() {
                     <BiometricsChart type="spo2" title="SpO₂" />
                     <BiometricsChart type="temperature" title="Temperature" />
                   </div>
-                  <StressLogComponent />
                 </TabsContent>
 
                 <TabsContent value="push">
@@ -471,9 +577,66 @@ export default function UserDashboard() {
               </div>
             )}
             
-            {tab === "logs" && (
-              <div className="space-y-4">
-                <StressLogComponent />
+            {tab === "alerts" && (
+              <div className="space-y-6">
+                <Card className="p-6">
+                  <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                    <Bell className="w-5 h-5" /> Alert History
+                  </h3>
+                  <div className="space-y-2">
+                    {alertHistory.length > 0 ? (
+                      alertHistory.map((alert, index) => (
+                        <div key={index} className="p-3 bg-gray-50 rounded border">
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <div className="font-medium">{alert.reason}</div>
+                              <div className="text-sm text-gray-500">
+                                {new Date(alert.created_at).toLocaleString()}
+                              </div>
+                            </div>
+                            <span className="text-xs px-2 py-1 bg-gray-200 rounded-full">
+                              {alert.type}
+                            </span>
+                          </div>
+                          <div className="mt-1 text-sm">
+                            Stress level: {Math.round(alert.stress_level * 100)}%
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="text-center py-8 text-gray-500">
+                        No alert history found
+                      </div>
+                    )}
+                  </div>
+                </Card>
+                
+                <Card className="p-6">
+                  <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                    <User2 className="w-5 h-5" /> Emergency Contacts
+                  </h3>
+                  <div className="space-y-4">
+                    <div>
+                      <Label>Your Phone Number</Label>
+                      <div className="mt-1 font-medium">
+                        {profile.phone || "Not set"}
+                      </div>
+                    </div>
+                    <div>
+                      <Label>Doctor's Phone Number</Label>
+                      <div className="mt-1 font-medium">
+                        {profile.doctor_phone || "Not set"}
+                      </div>
+                    </div>
+                    <Button 
+                      variant="outline" 
+                      onClick={() => setSheetOpen(true)}
+                      className="w-full"
+                    >
+                      Edit Contact Information
+                    </Button>
+                  </div>
+                </Card>
               </div>
             )}
           </div>
