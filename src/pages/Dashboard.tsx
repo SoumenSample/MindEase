@@ -22,6 +22,7 @@ import { motion } from "framer-motion";
 import ProfileForm from "../components/ProfileForm";
 import BreathingExercise from "@/components/BreathingExercise";
 import Footer from "@/components/Footer";
+import { Menu, X } from "lucide-react";
 
 export default function UserDashboard() {
   const { authState, signOut } = useAuth();
@@ -32,6 +33,7 @@ export default function UserDashboard() {
   const [latestMetrics, setLatestMetrics] = useState(null);
   const [stressScore, setStressScore] = useState(0);
   const [isBlinking, setIsBlinking] = useState(false);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
   // Stress state thresholds (match ESP32 values)
   const STRESS_LOW = 0.3;
@@ -143,9 +145,7 @@ export default function UserDashboard() {
     };
   }, [authState.user]);
 
-  // ... (keep existing uploadAvatar, saveProfile, handleLogout functions)
-  
- const uploadAvatar = async () => {
+  const uploadAvatar = async () => {
     if (!avatarFile || !authState.user) return null;
     const ext = avatarFile.name.split(".").pop();
     const path = `${authState.user.id}/avatar.${ext}`;
@@ -198,7 +198,6 @@ export default function UserDashboard() {
     window.location.href = "/";
   };
 
-
   // Determine stress state based on score
   const getStressState = () => {
     if (stressScore < STRESS_LOW) {
@@ -226,33 +225,57 @@ export default function UserDashboard() {
 
   return (
     <div className="flex flex-col min-h-screen">
+      {/* Mobile header with hamburger menu */}
+      <div className="lg:hidden flex items-center justify-between p-4 bg-white border-b">
+        <Button 
+          variant="ghost" 
+          size="icon"
+          onClick={() => setMobileSidebarOpen(!mobileSidebarOpen)}
+        >
+          {mobileSidebarOpen ? <X /> : <Menu />}
+        </Button>
+        <h1 className="text-xl font-bold">MindEase</h1>
+        <div className="w-10"></div> {/* Spacer for balance */}
+      </div>
+
       {/* Flex row: sidebar + main content */}
       <div className="flex flex-1">
-        <aside className="w-64 bg-white border-r p-4 space-y-4">
-          <h1 className="text-xl font-bold mb-4">MindEase</h1>
+        {/* Sidebar - hidden on mobile unless toggled */}
+        <aside className={`${mobileSidebarOpen ? 'block' : 'hidden'} lg:block w-64 bg-white border-r p-4 space-y-4 fixed lg:static h-full z-50 lg:z-auto`}>
+          <h1 className="text-xl font-bold mb-4 hidden lg:block">MindEase</h1>
           {["status", "exercises", "alert"].map((k) => (
-            <Button key={k} variant="ghost" className="w-full justify-start" onClick={() => setTab(k)}>
+            <Button 
+              key={k} 
+              variant="ghost" 
+              className="w-full justify-start"
+              onClick={() => {
+                setTab(k);
+                setMobileSidebarOpen(false);
+              }}
+            >
               {k[0].toUpperCase() + k.slice(1)}
             </Button>
           ))}
         </aside>
 
-        <main className="flex-1 p-6 bg-gray-50 flex flex-col">
+        {/* Main content area with mobile padding adjustments */}
+        <main className={`flex-1 p-4 lg:p-6 bg-gray-50 flex flex-col ${mobileSidebarOpen ? 'ml-64' : ''} lg:ml-0`}>
           {/* Header */}
-          <div className="flex items-center justify-between mb-6">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
             <h2 className="text-xl font-semibold">Hello, {profile.username || "User"}</h2>
 
-            <div className="flex items-center space-x-4">
+            <div className="flex items-center justify-between sm:justify-end gap-4">
               <motion.div
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.5 }}
+                className="flex-1 sm:flex-none"
               >
-                <Card className={`px-4 py-2 rounded-xl shadow text-white text-sm font-semibold ${stressState.color}`}>
+                <Card className={`px-3 py-1 sm:px-4 sm:py-2 rounded-xl shadow text-white text-sm font-semibold ${stressState.color}`}>
                   <div className="flex items-center gap-2">
                     <span className="text-lg">{stressState.icon}</span>
-                    <span>{stressState.text}</span>
-                    <span className="ml-2 text-xs opacity-80">({Math.round(stressScore * 100)}%)</span>
+                    <span className="hidden sm:inline">{stressState.text}</span>
+                    <span className="sm:ml-2 text-xs opacity-80">({Math.round(stressScore * 100)}%)</span>
                   </div>
                 </Card>
               </motion.div>
@@ -277,8 +300,8 @@ export default function UserDashboard() {
             </div>
           </div>
 
- <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
-            <SheetContent side="right" className="w-[360px] sm:w-[400px]">
+          <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
+            <SheetContent side="right" className="w-[90vw] sm:w-[360px]">
               <SheetHeader>
                 <SheetTitle>Edit profile</SheetTitle>
               </SheetHeader>
@@ -295,13 +318,13 @@ export default function UserDashboard() {
           <div className="flex-1 overflow-auto">
             {tab === "status" && (
               <Tabs defaultValue="charts">
-                <TabsList className="mb-6">
-                  <TabsTrigger value="charts">Dashboard</TabsTrigger>
-                  <TabsTrigger value="push">Push Test Data</TabsTrigger>
+                <TabsList className="mb-6 w-full sm:w-auto">
+                  <TabsTrigger value="charts" className="flex-1 sm:flex-none">Dashboard</TabsTrigger>
+                  <TabsTrigger value="push" className="flex-1 sm:flex-none">Push Test Data</TabsTrigger>
                 </TabsList>
 
                 <TabsContent value="charts">
-                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
                     <BiometricsChart type="gsr" title="GSR" />
                     <BiometricsChart type="heartbeat" title="Heart Rate" />
                     <BiometricsChart type="spo2" title="SpO₂" />
@@ -310,7 +333,7 @@ export default function UserDashboard() {
                 </TabsContent>
 
                 <TabsContent value="push">
-                  <div className="max-w-xl mx-auto bg-white p-6 rounded-xl shadow">
+                  <div className="max-w-xl mx-auto bg-white p-4 sm:p-6 rounded-xl shadow">
                     <h2 className="text-lg font-semibold mb-4">Push Biometric Test Data</h2>
                     <BiometricsForm />
                   </div>
@@ -318,12 +341,20 @@ export default function UserDashboard() {
               </Tabs>
             )}
 
-            {tab === "exercises" && (<div className="text-lg"><BreathingExercise /></div>)}
-            {tab === "alert" && <div className="text-lg">Coming soon: alert system for extreme biometrics.</div>}
+            {tab === "exercises" && (
+              <div className="text-lg">
+                <BreathingExercise />
+              </div>
+            )}
+            
+            {tab === "alert" && (
+              <div className="text-lg p-4 bg-white rounded-lg shadow">
+                Coming soon: alert system for extreme biometrics.
+              </div>
+            )}
           </div>
         </main>
       </div>
-
 
       <Footer />
     </div>
