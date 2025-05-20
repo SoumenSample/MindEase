@@ -1,6 +1,7 @@
 
 import { Button } from "@/components/ui/button";
 import { Brain } from "lucide-react";
+import { Link } from "react-router-dom";
 
 const Hero = () => {
   // TODO: Replace this with your actual authentication logic or hook
@@ -26,9 +27,9 @@ const Hero = () => {
                         {isAuthenticated ? (
               <>
             <div className="flex flex-col sm:flex-row gap-4 pt-4">
-              <Button size="lg" className="px-8">
-                Get Started
-              </Button>
+              <Link to="/dashboard"><Button size="lg" className="px-8">
+                Dashboard
+              </Button></Link>
               <Button size="lg" variant="outline" className="px-8">
                 Learn More
               </Button>
