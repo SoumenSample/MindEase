@@ -25,23 +25,23 @@ const char* contentType = "application/json";
 
 // Stress Detection Parameters
 #define GSR_THRESHOLD      2500    // Higher = more stress
-#define GSR_WEIGHT         0.3
+#define GSR_WEIGHT         0.3f
 #define HR_THRESHOLD       80      // BPM
-#define HR_WEIGHT          0.25
-#define TEMP_THRESHOLD     37.2    // °C
-#define TEMP_WEIGHT        0.2
+#define HR_WEIGHT          0.25f
+#define TEMP_THRESHOLD     37.2f   // °C
+#define TEMP_WEIGHT        0.2f
 #define SPO2_THRESHOLD     95      // %
-#define SPO2_WEIGHT        0.25
+#define SPO2_WEIGHT        0.25f
 
 // Normalization factors
-#define GSR_NORMAL         1500
-#define HR_NORMAL          72
-#define TEMP_NORMAL        36.5
-#define SPO2_NORMAL        98
+#define GSR_NORMAL         1500.0f
+#define HR_NORMAL          72.0f
+#define TEMP_NORMAL        36.5f
+#define SPO2_NORMAL        98.0f
 
 // GSR Normalization Range (adjust these based on your actual readings)
-#define GSR_MIN           500     // Minimum expected GSR value
-#define GSR_MAX           3500    // Maximum expected GSR value
+#define GSR_MIN           500.0f   // Minimum expected GSR value
+#define GSR_MAX           3500.0f  // Maximum expected GSR value
 
 // Setup sensor instances
 OneWire oneWire(ONE_WIRE_BUS);
@@ -62,7 +62,7 @@ void setup() {
 
   // Initialize stress history
   for (int i = 0; i < STRESS_WINDOW_SIZE; i++) {
-    stressHistory[i] = 0;
+    stressHistory[i] = 0.0f;
   }
 
   WiFi.begin(ssid, password);
@@ -84,10 +84,10 @@ void setup() {
 
 float calculateStressScore(float gsr, int heartRate, int spo2, float temperature) {
     // Calculate normalized deviations from baseline
-    float gsrFactor = max(0, gsr - GSR_NORMAL) / (GSR_THRESHOLD - GSR_NORMAL);
-    float hrFactor = max(0, heartRate - HR_NORMAL) / (HR_THRESHOLD - HR_NORMAL);
-    float tempFactor = max(0, temperature - TEMP_NORMAL) / (TEMP_THRESHOLD - TEMP_NORMAL);
-    float spo2Factor = max(0, SPO2_NORMAL - spo2) / (SPO2_NORMAL - SPO2_THRESHOLD);
+    float gsrFactor = max(0.0f, gsr - GSR_NORMAL) / (GSR_THRESHOLD - GSR_NORMAL);
+    float hrFactor = max(0.0f, (float)heartRate - HR_NORMAL) / (HR_THRESHOLD - HR_NORMAL);
+    float tempFactor = max(0.0f, temperature - TEMP_NORMAL) / (TEMP_THRESHOLD - TEMP_NORMAL);
+    float spo2Factor = max(0.0f, SPO2_NORMAL - (float)spo2) / (SPO2_NORMAL - SPO2_THRESHOLD);
     
     // Calculate weighted stress score
     return (gsrFactor * GSR_WEIGHT) +
@@ -100,7 +100,7 @@ float normalizeGSR(float rawGsr) {
   // Constrain the value within expected range
   float constrained = constrain(rawGsr, GSR_MIN, GSR_MAX);
   // Map to 0-100 range
-  return 100.0 * (constrained - GSR_MIN) / (GSR_MAX - GSR_MIN);
+  return 100.0f * (constrained - GSR_MIN) / (GSR_MAX - GSR_MIN);
 }
 
 void updateLEDs(float stressScore) {
@@ -108,11 +108,11 @@ void updateLEDs(float stressScore) {
     digitalWrite(LED_GREEN, LOW);
     digitalWrite(LED_RED, LOW);
     
-    if (stressScore < 0.3) {
+    if (stressScore < 0.3f) {
         // Low stress - solid green
         digitalWrite(LED_GREEN, HIGH);
     } 
-    else if (stressScore < 0.7) {
+    else if (stressScore < 0.7f) {
         // Moderate stress - blinking green
         if (millis() - lastLEDToggle > 500) {
             digitalWrite(LED_GREEN, !digitalRead(LED_GREEN));
@@ -145,7 +145,7 @@ void loop() {
     stressIndex = (stressIndex + 1) % STRESS_WINDOW_SIZE;
     
     // Calculate average stress
-    float avgStress = 0;
+    float avgStress = 0.0f;
     for (int i = 0; i < STRESS_WINDOW_SIZE; i++) {
         avgStress += stressHistory[i];
     }
@@ -173,11 +173,11 @@ void sendToSupabase(float gsr, int heartRate, int spo2, float temperature, float
     float normalizedGsr = normalizeGSR(gsr);
     
     String payload = "[{\"user_id\": \"74acc9e1-3900-46d8-a7b8-4e385dbe08b7\", ";
-    payload += "\"gsr\": " + String(normalizedGsr) + ", ";  // Send normalized value
+    payload += "\"gsr\": " + String(normalizedGsr, 2) + ", ";  // Send normalized value with 2 decimal places
     payload += "\"heartbeat\": " + String(heartRate) + ", ";
     payload += "\"spo2\": " + String(spo2) + ", ";
-    payload += "\"temperature\": " + String(temperature) + ", ";
-    payload += "\"stress_score\": " + String(stressScore) + "}]";
+    payload += "\"temperature\": " + String(temperature, 2) + ", ";
+    payload += "\"stress_score\": " + String(stressScore, 2) + "}]";
 
     // Debug output
     Serial.print("Raw GSR: ");
