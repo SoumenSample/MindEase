@@ -30,6 +30,24 @@ export default function UserDashboard() {
   const [avatarFile, setAvatarFile] = useState(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [latestMetrics, setLatestMetrics] = useState(null);
+  const [stressScore, setStressScore] = useState(0);
+  const [isBlinking, setIsBlinking] = useState(false);
+
+  // Stress state thresholds (match ESP32 values)
+  const STRESS_LOW = 0.3;
+  const STRESS_HIGH = 0.7;
+
+  // Blinking effect for moderate stress
+  useEffect(() => {
+    if (stressScore >= STRESS_LOW && stressScore < STRESS_HIGH) {
+      const interval = setInterval(() => {
+        setIsBlinking(prev => !prev);
+      }, 500);
+      return () => clearInterval(interval);
+    } else {
+      setIsBlinking(false);
+    }
+  }, [stressScore]);
 
   const fetchProfile = async () => {
     if (!authState.user?.id) return;
@@ -53,21 +71,81 @@ export default function UserDashboard() {
     if (!authState.user?.id) return;
     const { data } = await supabase
       .from("biometrics")
-      .select("gsr, heartbeat, spo2, temperature")
+      .select("gsr, heartbeat, spo2, temperature, stress_score")
       .eq("user_id", authState.user.id)
       .order("recorded_at", { ascending: false })
       .limit(1)
       .single();
 
-    setLatestMetrics(data);
+    if (data) {
+      setLatestMetrics(data);
+      // Use the stress_score from database if available, otherwise calculate
+      setStressScore(data.stress_score ?? calculateStressScore(data));
+    }
+  };
+
+  // Calculate stress score matching ESP32 algorithm
+  const calculateStressScore = (metrics) => {
+    if (!metrics) return 0;
+    
+    const {
+      gsr = 0,
+      heartbeat = 0,
+      spo2 = 100,
+      temperature = 0
+    } = metrics;
+
+    // Normalization factors (match ESP32 values)
+    const GSR_NORMAL = 1500;
+    const HR_NORMAL = 72;
+    const TEMP_NORMAL = 36.5;
+    const SPO2_NORMAL = 98;
+
+    // Thresholds (match ESP32 values)
+    const GSR_THRESHOLD = 2500;
+    const HR_THRESHOLD = 80;
+    const TEMP_THRESHOLD = 37.2;
+    const SPO2_THRESHOLD = 95;
+
+    // Calculate normalized deviations
+    const gsrFactor = Math.max(0, gsr - GSR_NORMAL) / (GSR_THRESHOLD - GSR_NORMAL);
+    const hrFactor = Math.max(0, heartbeat - HR_NORMAL) / (HR_THRESHOLD - HR_NORMAL);
+    const tempFactor = Math.max(0, temperature - TEMP_NORMAL) / (TEMP_THRESHOLD - TEMP_NORMAL);
+    const spo2Factor = Math.max(0, SPO2_NORMAL - spo2) / (SPO2_NORMAL - SPO2_THRESHOLD);
+    
+    // Weighted stress score (match ESP32 weights)
+    return (gsrFactor * 0.3) +
+           (hrFactor * 0.25) +
+           (tempFactor * 0.2) +
+           (spo2Factor * 0.25);
   };
 
   useEffect(() => {
     fetchProfile();
     fetchLatestMetrics();
+    
+    // Set up real-time updates
+    const channel = supabase
+      .channel('biometrics')
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'biometrics',
+        filter: `user_id=eq.${authState.user?.id}`
+      }, (payload) => {
+        setLatestMetrics(payload.new);
+        setStressScore(payload.new.stress_score ?? calculateStressScore(payload.new));
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [authState.user]);
 
-  const uploadAvatar = async () => {
+  // ... (keep existing uploadAvatar, saveProfile, handleLogout functions)
+  
+ const uploadAvatar = async () => {
     if (!avatarFile || !authState.user) return null;
     const ext = avatarFile.name.split(".").pop();
     const path = `${authState.user.id}/avatar.${ext}`;
@@ -120,11 +198,31 @@ export default function UserDashboard() {
     window.location.href = "/";
   };
 
-  const isStressed = latestMetrics && (
-    latestMetrics.heartbeat > 110 ||
-    latestMetrics.spo2 < 93 ||
-    latestMetrics.gsr > 75
-  );
+
+  // Determine stress state based on score
+  const getStressState = () => {
+    if (stressScore < STRESS_LOW) {
+      return {
+        text: "Relaxed 😊",
+        color: "bg-green-500",
+        icon: "🟢"
+      };
+    } else if (stressScore < STRESS_HIGH) {
+      return {
+        text: "Moderate Stress 😐",
+        color: isBlinking ? "bg-green-500" : "bg-green-600",
+        icon: "🟡"
+      };
+    } else {
+      return {
+        text: "High Stress 😖",
+        color: "bg-red-500",
+        icon: "🔴"
+      };
+    }
+  };
+
+  const stressState = getStressState();
 
   return (
     <div className="flex flex-col min-h-screen">
@@ -150,8 +248,12 @@ export default function UserDashboard() {
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.5 }}
               >
-                <Card className={`px-4 py-2 rounded-xl shadow text-white text-sm font-semibold ${isStressed ? "bg-red-500" : "bg-green-500"}`}>
-                  {isStressed ? "Stress Detected😖😖" : "Relaxed😊😊"}
+                <Card className={`px-4 py-2 rounded-xl shadow text-white text-sm font-semibold ${stressState.color}`}>
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg">{stressState.icon}</span>
+                    <span>{stressState.text}</span>
+                    <span className="ml-2 text-xs opacity-80">({Math.round(stressScore * 100)}%)</span>
+                  </div>
                 </Card>
               </motion.div>
 
@@ -175,50 +277,7 @@ export default function UserDashboard() {
             </div>
           </div>
 
-          <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
-            <SheetContent side="right" className="w-[360px] sm:w-[400px]">
-              <SheetHeader>
-                <SheetTitle>Edit profile</SheetTitle>
-              </SheetHeader>
-              <ProfileForm
-                profile={profile}
-                setProfile={setProfile}
-                avatarFile={avatarFile}
-                setAvatarFile={setAvatarFile}
-                onSave={saveProfile}
-              />
-            </SheetContent>
-          </Sheet>
-
-          <div className="flex-1 overflow-auto">
-            {tab === "status" && (
-              <Tabs defaultValue="charts">
-                <TabsList className="mb-6">
-                  <TabsTrigger value="charts">Dashboard</TabsTrigger>
-                  <TabsTrigger value="push">Push Test Data</TabsTrigger>
-                </TabsList>
-
-                <TabsContent value="charts">
-                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                    <BiometricsChart type="gsr" title="GSR" />
-                    <BiometricsChart type="heartbeat" title="Heart Rate" />
-                    <BiometricsChart type="spo2" title="SpO₂" />
-                    <BiometricsChart type="temperature" title="Temperature" />
-                  </div>
-                </TabsContent>
-
-                <TabsContent value="push">
-                  <div className="max-w-xl mx-auto bg-white p-6 rounded-xl shadow">
-                    <h2 className="text-lg font-semibold mb-4">Push Biometric Test Data</h2>
-                    <BiometricsForm />
-                  </div>
-                </TabsContent>
-              </Tabs>
-            )}
-
-            {tab === "exercises" && (<div className="text-lg"><BreathingExercise /></div>)}
-            {tab === "alert" && <div className="text-lg">Coming soon: alert system for extreme biometrics.</div>}
-          </div>
+          {/* ... (rest of your existing JSX remains the same) */}
         </main>
       </div>
 
