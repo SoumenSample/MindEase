@@ -37,9 +37,9 @@ const Hero = () => {
             </>
             ): (
               <div className="flex flex-col sm:flex-row gap-4 pt-4">
-                <Button size="lg" className="px-8">
-                  Get Started
-                </Button>
+                <Button size="lg" className="px-8" asChild>
+  <Link to="/auth">Get Started</Link>
+</Button>
                 <Button size="lg" variant="outline" className="px-8">
                   Learn More
                 </Button>
