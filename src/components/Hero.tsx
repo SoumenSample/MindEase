@@ -3,6 +3,9 @@ import { Button } from "@/components/ui/button";
 import { Brain } from "lucide-react";
 
 const Hero = () => {
+  // TODO: Replace this with your actual authentication logic or hook
+  const isAuthenticated = false;
+
   return (
     <section className="pt-28 pb-20 gradient-bg">
       <div className="container mx-auto px-4 md:px-6">
@@ -20,7 +23,8 @@ const Hero = () => {
             <p className="text-lg text-neutral-dark opacity-90 max-w-xl">
               The MindEase headband uses advanced biosensors to detect your stress levels and helps you stay mindful of your mental state.
             </p>
-            
+                        {isAuthenticated ? (
+              <>
             <div className="flex flex-col sm:flex-row gap-4 pt-4">
               <Button size="lg" className="px-8">
                 Get Started
@@ -29,6 +33,17 @@ const Hero = () => {
                 Learn More
               </Button>
             </div>
+            </>
+            ): (
+              <div className="flex flex-col sm:flex-row gap-4 pt-4">
+                <Button size="lg" className="px-8">
+                  Get Started
+                </Button>
+                <Button size="lg" variant="outline" className="px-8">
+                  Learn More
+                </Button>
+              </div>
+            )}
           </div>
           
           <div className="md:w-1/2 flex justify-center">
