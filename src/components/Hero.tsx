@@ -27,9 +27,9 @@ const Hero = () => {
                         {isAuthenticated ? (
               <>
             <div className="flex flex-col sm:flex-row gap-4 pt-4">
-              <Link to="/dashboard"><Button size="lg" className="px-8">
-                Dashboard
-              </Button></Link>
+              <Button size="lg" className="px-8">
+                <Link to="/dashboard">Dashboard</Link>
+              </Button>
               <Button size="lg" variant="outline" className="px-8">
                 Learn More
               </Button>
