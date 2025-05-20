@@ -2,10 +2,11 @@
 import { Button } from "@/components/ui/button";
 import { Brain } from "lucide-react";
 import { Link } from "react-router-dom";
-
+import { useState } from 'react';
+import { useAuth } from '@/context/AuthContext';
 const Hero = () => {
-  // TODO: Replace this with your actual authentication logic or hook
-  const isAuthenticated = false;
+  const { authState, signOut } = useAuth();
+  const isAuthenticated = !!authState.user;
 
   return (
     <section className="pt-28 pb-20 gradient-bg">
@@ -24,7 +25,7 @@ const Hero = () => {
             <p className="text-lg text-neutral-dark opacity-90 max-w-xl">
               The MindEase headband uses advanced biosensors to detect your stress levels and helps you stay mindful of your mental state.
             </p>
-                        {!isAuthenticated ? (
+                        {isAuthenticated ? (
               <>
             <div className="flex flex-col sm:flex-row gap-4 pt-4">
              <Button size="lg" className="px-8" asChild>
