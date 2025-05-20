@@ -24,12 +24,12 @@ const Hero = () => {
             <p className="text-lg text-neutral-dark opacity-90 max-w-xl">
               The MindEase headband uses advanced biosensors to detect your stress levels and helps you stay mindful of your mental state.
             </p>
-                        {isAuthenticated ? (
+                        {!isAuthenticated ? (
               <>
             <div className="flex flex-col sm:flex-row gap-4 pt-4">
              <Button size="lg" className="px-8" asChild>
-  <Link to="/dashboard">Dashboard</Link>
-</Button>
+             <Link to="/dashboard">Dashboard</Link>
+              </Button>
               <Button size="lg" variant="outline" className="px-8">
                 Learn More
               </Button>
