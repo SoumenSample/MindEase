@@ -1,0 +1,228 @@
+"use client";
+
+import React, { useState, useEffect } from "react";
+import { useAuth } from "@/context/AuthContext";
+import { Button } from "@/components/ui/button";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import BiometricsChart from "@/components/BiometricsChart";
+import BiometricsForm from "@/components/BiometricsForm";
+import { supabase } from "@/integrations/supabase/client";
+import { toast } from "@/components/ui/sonner";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator
+} from "@/components/ui/dropdown-menu";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Card } from "@/components/ui/card";
+import { motion } from "framer-motion";
+import ProfileForm from "../components/ProfileForm";
+import BreathingExercise from "@/components/BreathingExercise";
+import Footer from "@/components/Footer";
+
+export default function UserDashboard() {
+  const { authState, signOut } = useAuth();
+  const [tab, setTab] = useState("status");
+  const [profile, setProfile] = useState({ username: "", age: "", height: "", avatar_url: "" });
+  const [avatarFile, setAvatarFile] = useState(null);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [latestMetrics, setLatestMetrics] = useState(null);
+
+  const fetchProfile = async () => {
+    if (!authState.user?.id) return;
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("id", authState.user.id)
+      .single();
+
+    if (!error && data) {
+      setProfile({
+        username: data.username ?? "",
+        age: data.age?.toString() ?? "",
+        height: data.height?.toString() ?? "",
+        avatar_url: data.avatar_url ?? ""
+      });
+    }
+  };
+
+  const fetchLatestMetrics = async () => {
+    if (!authState.user?.id) return;
+    const { data } = await supabase
+      .from("biometrics")
+      .select("gsr, heartbeat, spo2, temperature")
+      .eq("user_id", authState.user.id)
+      .order("recorded_at", { ascending: false })
+      .limit(1)
+      .single();
+
+    setLatestMetrics(data);
+  };
+
+  useEffect(() => {
+    fetchProfile();
+    fetchLatestMetrics();
+  }, [authState.user]);
+
+  const uploadAvatar = async () => {
+    if (!avatarFile || !authState.user) return null;
+    const ext = avatarFile.name.split(".").pop();
+    const path = `${authState.user.id}/avatar.${ext}`;
+
+    const { error } = await supabase.storage
+      .from("avatars")
+      .upload(path, avatarFile, {
+        upsert: true,
+        cacheControl: "3600",
+        contentType: avatarFile.type
+      });
+
+    if (error) {
+      toast.error("Avatar upload failed: " + error.message);
+      return null;
+    }
+
+    return supabase.storage.from("avatars").getPublicUrl(path).data?.publicUrl ?? null;
+  };
+
+  const saveProfile = async () => {
+    if (!authState.user?.id) return;
+    let avatar_url = profile.avatar_url;
+
+    if (avatarFile) {
+      const url = await uploadAvatar();
+      if (url) avatar_url = url;
+    }
+
+    const { error } = await supabase.from("profiles").upsert({
+      id: authState.user.id,
+      username: profile.username.trim(),
+      age: Number(profile.age) || null,
+      height: Number(profile.height) || null,
+      avatar_url
+    });
+
+    if (!error) {
+      toast.success("Profile updated!");
+      setAvatarFile(null);
+      setSheetOpen(false);
+      fetchProfile();
+    } else {
+      toast.error(error.message);
+    }
+  };
+
+  const handleLogout = async () => {
+    await signOut();
+    window.location.href = "/";
+  };
+
+  const isStressed = latestMetrics && (
+    latestMetrics.heartbeat > 110 ||
+    latestMetrics.spo2 < 93 ||
+    latestMetrics.gsr > 75
+  );
+
+  return (
+    <div className="flex flex-col min-h-screen">
+      {/* Flex row: sidebar + main content */}
+      <div className="flex flex-1">
+        <aside className="w-64 bg-white border-r p-4 space-y-4">
+          <h1 className="text-xl font-bold mb-4">MindEase</h1>
+          {["status", "exercises", "alert"].map((k) => (
+            <Button key={k} variant="ghost" className="w-full justify-start" onClick={() => setTab(k)}>
+              {k[0].toUpperCase() + k.slice(1)}
+            </Button>
+          ))}
+        </aside>
+
+        <main className="flex-1 p-6 bg-gray-50 flex flex-col">
+          {/* Header */}
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="text-xl font-semibold">Hello, {profile.username || "User"}</h2>
+
+            <div className="flex items-center space-x-4">
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.5 }}
+              >
+                <Card className={`px-4 py-2 rounded-xl shadow text-white text-sm font-semibold ${isStressed ? "bg-red-500" : "bg-green-500"}`}>
+                  {isStressed ? "Stress Detected😖😖" : "Relaxed😊😊"}
+                </Card>
+              </motion.div>
+
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Avatar className="cursor-pointer">
+                    <AvatarImage src={profile.avatar_url || undefined} />
+                    <AvatarFallback>{profile.username?.[0]?.toUpperCase() || "U"}</AvatarFallback>
+                  </Avatar>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-48">
+                  <DropdownMenuItem onSelect={(e) => { e.preventDefault(); setSheetOpen(true); }}>
+                    Edit profile
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onSelect={(e) => { e.preventDefault(); handleLogout(); }} className="text-red-600">
+                    Logout
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          </div>
+
+          <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
+            <SheetContent side="right" className="w-[360px] sm:w-[400px]">
+              <SheetHeader>
+                <SheetTitle>Edit profile</SheetTitle>
+              </SheetHeader>
+              <ProfileForm
+                profile={profile}
+                setProfile={setProfile}
+                avatarFile={avatarFile}
+                setAvatarFile={setAvatarFile}
+                onSave={saveProfile}
+              />
+            </SheetContent>
+          </Sheet>
+
+          <div className="flex-1 overflow-auto">
+            {tab === "status" && (
+              <Tabs defaultValue="charts">
+                <TabsList className="mb-6">
+                  <TabsTrigger value="charts">Dashboard</TabsTrigger>
+                  <TabsTrigger value="push">Push Test Data</TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="charts">
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                    <BiometricsChart type="gsr" title="GSR" />
+                    <BiometricsChart type="heartbeat" title="Heart Rate" />
+                    <BiometricsChart type="spo2" title="SpO₂" />
+                    <BiometricsChart type="temperature" title="Temperature" />
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="push">
+                  <div className="max-w-xl mx-auto bg-white p-6 rounded-xl shadow">
+                    <h2 className="text-lg font-semibold mb-4">Push Biometric Test Data</h2>
+                    <BiometricsForm />
+                  </div>
+                </TabsContent>
+              </Tabs>
+            )}
+
+            {tab === "exercises" && (<div className="text-lg"><BreathingExercise /></div>)}
+            {tab === "alert" && <div className="text-lg">Coming soon: alert system for extreme biometrics.</div>}
+          </div>
+        </main>
+      </div>
+
+      <Footer />
+    </div>
+  );
+}
