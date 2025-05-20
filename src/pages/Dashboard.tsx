@@ -34,6 +34,8 @@ export default function UserDashboard() {
   const [stressScore, setStressScore] = useState(0);
   const [isBlinking, setIsBlinking] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [stressLogs, setStressLogs] = useState([]);
+  const [timeFilter, setTimeFilter] = useState('24h');
 
   // Stress state thresholds (match ESP32 values)
   const STRESS_LOW = 0.3;
@@ -73,7 +75,7 @@ export default function UserDashboard() {
     if (!authState.user?.id) return;
     const { data } = await supabase
       .from("biometrics")
-      .select("gsr, heartbeat, spo2, temperature, stress_score")
+      .select("gsr, heartbeat, spo2, temperature, stress_score, recorded_at")
       .eq("user_id", authState.user.id)
       .order("recorded_at", { ascending: false })
       .limit(1)
@@ -81,9 +83,21 @@ export default function UserDashboard() {
 
     if (data) {
       setLatestMetrics(data);
-      // Use the stress_score from database if available, otherwise calculate
       setStressScore(data.stress_score ?? calculateStressScore(data));
     }
+  };
+
+  const fetchStressLogs = async () => {
+    if (!authState.user?.id) return;
+    const { data } = await supabase
+      .from("biometrics")
+      .select("*")
+      .eq("user_id", authState.user.id)
+      .gte("stress_score", STRESS_HIGH)
+      .order("recorded_at", { ascending: false })
+      .limit(50);
+
+    if (data) setStressLogs(data);
   };
 
   // Calculate stress score matching ESP32 algorithm
@@ -125,6 +139,7 @@ export default function UserDashboard() {
   useEffect(() => {
     fetchProfile();
     fetchLatestMetrics();
+    fetchStressLogs();
     
     // Set up real-time updates
     const channel = supabase
@@ -136,7 +151,13 @@ export default function UserDashboard() {
         filter: `user_id=eq.${authState.user?.id}`
       }, (payload) => {
         setLatestMetrics(payload.new);
-        setStressScore(payload.new.stress_score ?? calculateStressScore(payload.new));
+        const newScore = payload.new.stress_score ?? calculateStressScore(payload.new);
+        setStressScore(newScore);
+        
+        // Add to logs if high stress
+        if (newScore >= STRESS_HIGH) {
+          setStressLogs(prev => [payload.new, ...prev.slice(0, 49)]);
+        }
       })
       .subscribe();
 
@@ -221,7 +242,109 @@ export default function UserDashboard() {
     }
   };
 
+  // Filter logs based on time selection
+  const filteredLogs = stressLogs.filter(log => {
+    const logTime = new Date(log.recorded_at).getTime();
+    const now = Date.now();
+    
+    if (timeFilter === '24h') return now - logTime <= 24 * 60 * 60 * 1000;
+    if (timeFilter === 'week') return now - logTime <= 7 * 24 * 60 * 60 * 1000;
+    return true;
+  });
+
   const stressState = getStressState();
+
+  const StressLogComponent = () => (
+    <div className="mt-6 space-y-4">
+      <div className="flex justify-between items-center">
+        <h3 className="text-lg font-semibold">Stress Events Log</h3>
+        <div className="flex gap-2">
+          <Button 
+            variant={timeFilter === '24h' ? 'default' : 'outline'} 
+            size="sm"
+            onClick={() => setTimeFilter('24h')}
+          >
+            Last 24h
+          </Button>
+          <Button 
+            variant={timeFilter === 'week' ? 'default' : 'outline'} 
+            size="sm"
+            onClick={() => setTimeFilter('week')}
+          >
+            Last Week
+          </Button>
+          <Button 
+            variant={timeFilter === 'all' ? 'default' : 'outline'} 
+            size="sm"
+            onClick={() => setTimeFilter('all')}
+          >
+            All Time
+          </Button>
+        </div>
+      </div>
+      
+      {filteredLogs.length === 0 ? (
+        <Card className="p-4 text-center text-gray-500">
+          No high stress events recorded in this period
+        </Card>
+      ) : (
+        <div className="space-y-3">
+          {filteredLogs.map((log, index) => {
+            const severity = log.stress_score >= 0.9 ? 'high' : 
+                           log.stress_score >= 0.7 ? 'medium' : 'low';
+            
+            return (
+              <Card 
+                key={index}
+                className={`p-4 border-l-4 transition-all ${
+                  severity === 'high' ? 'border-red-500 bg-red-50' :
+                  severity === 'medium' ? 'border-orange-500 bg-orange-50' :
+                  'border-yellow-500 bg-yellow-50'
+                }`}
+              >
+                <div className="flex justify-between items-center">
+                  <div>
+                    <p className="font-medium">
+                      {new Date(log.recorded_at).toLocaleString()}
+                    </p>
+                    <p className="text-sm">
+                      Stress level: <span className="font-semibold">{Math.round(log.stress_score * 100)}%</span>
+                    </p>
+                  </div>
+                  <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                    severity === 'high' ? 'bg-red-500 text-white' :
+                    severity === 'medium' ? 'bg-orange-500 text-white' :
+                    'bg-yellow-500 text-gray-800'
+                  }`}>
+                    {severity === 'high' ? 'Severe' : 
+                     severity === 'medium' ? 'High' : 'Elevated'}
+                  </span>
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+                  <div className="flex items-center gap-1">
+                    <span className="font-medium">HR:</span>
+                    <span>{log.heartbeat} BPM</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="font-medium">GSR:</span>
+                    <span>{log.gsr}</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="font-medium">Temp:</span>
+                    <span>{log.temperature?.toFixed(1)}°C</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="font-medium">SpO2:</span>
+                    <span>{log.spo2}%</span>
+                  </div>
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <div className="flex flex-col min-h-screen">
@@ -235,15 +358,15 @@ export default function UserDashboard() {
           {mobileSidebarOpen ? <X /> : <Menu />}
         </Button>
         <h1 className="text-xl font-bold">MindEase</h1>
-        <div className="w-10"></div> {/* Spacer for balance */}
+        <div className="w-10"></div>
       </div>
 
       {/* Flex row: sidebar + main content */}
       <div className="flex flex-1">
-        {/* Sidebar - hidden on mobile unless toggled */}
+        {/* Sidebar */}
         <aside className={`${mobileSidebarOpen ? 'block' : 'hidden'} lg:block w-64 bg-white border-r p-4 space-y-4 fixed lg:static h-full z-50 lg:z-auto`}>
           <h1 className="text-xl font-bold mb-4 hidden lg:block">MindEase</h1>
-          {["status", "exercises", "alert"].map((k) => (
+          {["status", "exercises", "logs"].map((k) => (
             <Button 
               key={k} 
               variant="ghost" 
@@ -258,7 +381,7 @@ export default function UserDashboard() {
           ))}
         </aside>
 
-        {/* Main content area with mobile padding adjustments */}
+        {/* Main content */}
         <main className={`flex-1 p-4 lg:p-6 bg-gray-50 flex flex-col ${mobileSidebarOpen ? 'ml-64' : ''} lg:ml-0`}>
           {/* Header */}
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
@@ -330,6 +453,7 @@ export default function UserDashboard() {
                     <BiometricsChart type="spo2" title="SpO₂" />
                     <BiometricsChart type="temperature" title="Temperature" />
                   </div>
+                  <StressLogComponent />
                 </TabsContent>
 
                 <TabsContent value="push">
@@ -347,9 +471,9 @@ export default function UserDashboard() {
               </div>
             )}
             
-            {tab === "alert" && (
-              <div className="text-lg p-4 bg-white rounded-lg shadow">
-                Coming soon: alert system for extreme biometrics.
+            {tab === "logs" && (
+              <div className="space-y-4">
+                <StressLogComponent />
               </div>
             )}
           </div>
