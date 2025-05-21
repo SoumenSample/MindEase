@@ -9,10 +9,10 @@
 #include <time.h>
 
 // Supabase Config
-const char* ssid = "Hello";
-const char* password = "amibolbona";
-const char* supabaseUrl = "https://eubfseugwxchapicdfqe.supabase.co";
-const char* supabaseKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV1YmZzZXVnd3hjaGFwaWNkZnFlIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc0NzU3OTQ2MCwiZXhwIjoyMDYzMTU1NDYwfQ.o4Va7zZAu8vAJT3dJNDUpj84mueyMjtLZBXLdlOgdj8";
+const char* ssid = "wifi name";
+const char* password = "wifi password";
+const char* supabaseUrl = "your url";
+const char* supabaseKey = "youe key";
 const char* tableEndpoint = "/rest/v1/biometrics";
 const char* contentType = "application/json";
 
