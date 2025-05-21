@@ -6,6 +6,7 @@
 #include <DHT.h>
 #include <Wire.h>
 #include "MAX30105.h"
+#include <time.h>
 
 // Supabase Config
 const char* ssid = "Hello";
@@ -22,9 +23,16 @@ const char* contentType = "application/json";
 #define DHT_TYPE       DHT22
 #define LED_GREEN      12
 #define LED_RED        14
+#define CONNECTION_LED 2  // Built-in LED for connection status
+
+// GSR Parameters
+#define GSR_MIN        0       // Minimum expected raw GSR value
+#define GSR_MAX        4095    // Maximum expected raw GSR value (for ESP32's 12-bit ADC)
+#define GSR_OUT_MIN    0       // Desired minimum output value
+#define GSR_OUT_MAX    100     // Desired maximum output value
 
 // Stress Detection Parameters
-#define GSR_THRESHOLD      2500    // Higher = more stress
+#define GSR_THRESHOLD      70      // Normalized threshold (0-100)
 #define GSR_WEIGHT         0.3f
 #define HR_THRESHOLD       80      // BPM
 #define HR_WEIGHT          0.25f
@@ -34,14 +42,15 @@ const char* contentType = "application/json";
 #define SPO2_WEIGHT        0.25f
 
 // Normalization factors
-#define GSR_NORMAL         1500.0f
+#define GSR_NORMAL         50.0f   // Normalized baseline (0-100)
 #define HR_NORMAL          72.0f
 #define TEMP_NORMAL        36.5f
 #define SPO2_NORMAL        98.0f
 
-// GSR Normalization Range (adjust these based on your actual readings)
-#define GSR_MIN           500.0f   // Minimum expected GSR value
-#define GSR_MAX           3500.0f  // Maximum expected GSR value
+// Headband connection monitoring
+#define CONNECTION_TIMEOUT 30000  // 30 seconds
+unsigned long lastDataTime = 0;
+bool headbandConnected = true;
 
 // Setup sensor instances
 OneWire oneWire(ONE_WIRE_BUS);
@@ -59,12 +68,14 @@ void setup() {
   Serial.begin(115200);
   pinMode(LED_GREEN, OUTPUT);
   pinMode(LED_RED, OUTPUT);
+  pinMode(CONNECTION_LED, OUTPUT);
 
   // Initialize stress history
   for (int i = 0; i < STRESS_WINDOW_SIZE; i++) {
     stressHistory[i] = 0.0f;
   }
 
+  // Connect to WiFi
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
@@ -72,6 +83,7 @@ void setup() {
   }
   Serial.println("\nWiFi connected!");
 
+  // Initialize sensors
   dht.begin();
   bodyTempSensor.begin();
   Wire.begin(5, 4);  // SDA = 5, SCL = 4
@@ -80,6 +92,16 @@ void setup() {
     while (1);
   }
   particleSensor.setup();
+
+  // Configure time
+  configTime(0, 0, "pool.ntp.org");
+}
+
+float normalizeGSR(float rawGSR) {
+  // Constrain the raw value to expected range
+  rawGSR = constrain(rawGSR, GSR_MIN, GSR_MAX);
+  // Map to 0-100 range
+  return map(rawGSR, GSR_MIN, GSR_MAX, GSR_OUT_MIN, GSR_OUT_MAX);
 }
 
 float calculateStressScore(float gsr, int heartRate, int spo2, float temperature) {
@@ -94,13 +116,6 @@ float calculateStressScore(float gsr, int heartRate, int spo2, float temperature
            (hrFactor * HR_WEIGHT) +
            (tempFactor * TEMP_WEIGHT) +
            (spo2Factor * SPO2_WEIGHT);
-}
-
-float normalizeGSR(float rawGsr) {
-  // Constrain the value within expected range
-  float constrained = constrain(rawGsr, GSR_MIN, GSR_MAX);
-  // Map to 0-100 range
-  return 100.0f * (constrained - GSR_MIN) / (GSR_MAX - GSR_MIN);
 }
 
 void updateLEDs(float stressScore) {
@@ -125,9 +140,65 @@ void updateLEDs(float stressScore) {
     }
 }
 
+void sendToSupabase(float rawGSR, float gsr, int heartRate, int spo2, float temperature, float stressScore, bool connected) {
+  if (WiFi.status() == WL_CONNECTED) {
+    HTTPClient http;
+    String url = String(supabaseUrl) + tableEndpoint;
+    http.begin(url);
+    http.addHeader("apikey", supabaseKey);
+    http.addHeader("Authorization", String("Bearer ") + supabaseKey);
+    http.addHeader("Content-Type", contentType);
+    http.addHeader("Prefer", "resolution=merge-duplicates");
+
+    // Get current timestamp
+    struct tm timeinfo;
+    String timestamp = "";
+    if(getLocalTime(&timeinfo)){
+      char timeStr[25];
+      strftime(timeStr, sizeof(timeStr), "%Y-%m-%dT%H:%M:%SZ", &timeinfo);
+      timestamp = String(timeStr);
+    }
+
+    // Create payload
+    String payload = "[{";
+    payload += "\"user_id\":\"74acc9e1-3900-46d8-a7b8-4e385dbe08b7\",";
+    payload += "\"recorded_at\":\"" + timestamp + "\",";
+    payload += "\"gsr\":" + String(gsr, 1) + ",";
+    payload += "\"heartbeat\":" + String(heartRate) + ",";
+    payload += "\"spo2\":" + String(spo2) + ",";
+    payload += "\"temperature\":" + String(temperature, 2) + ",";
+    payload += "\"stress_score\":" + String(stressScore, 2) + ",";
+    payload += "\"headband_connected\":" + String(connected ? "true" : "false");
+    payload += "}]";
+
+    // Debug output
+    Serial.print("Raw GSR: ");
+    Serial.print(rawGSR);
+    Serial.print(", Normalized GSR: ");
+    Serial.println(gsr);
+    Serial.print("Payload: ");
+    Serial.println(payload);
+    Serial.print("Connection status: ");
+    Serial.println(connected ? "Connected" : "Disconnected");
+
+    int httpResponseCode = http.POST(payload);
+    Serial.print("POST Status: ");
+    Serial.println(httpResponseCode);
+    if (httpResponseCode > 0) {
+      String response = http.getString();
+      Serial.println(response);
+    } else {
+      Serial.print("Error code: ");
+      Serial.println(httpResponseCode);
+    }
+    http.end();
+  }
+}
+
 void loop() {
     // Read sensors
-    float gsrValue = analogRead(GSR_PIN);
+    float rawGSR = analogRead(GSR_PIN);
+    float normalizedGSR = normalizeGSR(rawGSR);
     bodyTempSensor.requestTemperatures();
     float bodyTemp = bodyTempSensor.getTempCByIndex(0);
     float ambientTemp = dht.readTemperature();
@@ -137,8 +208,12 @@ void loop() {
     int heartRate = particleSensor.getIR() > 50000 ? random(60, 90) : 0;
     int spo2 = random(95, 100);
 
-    // Calculate current stress score (using raw GSR value)
-    float currentStress = calculateStressScore(gsrValue, heartRate, spo2, bodyTemp);
+    // Update connection status
+    headbandConnected = (millis() - lastDataTime) < CONNECTION_TIMEOUT;
+    digitalWrite(CONNECTION_LED, headbandConnected ? HIGH : LOW);
+
+    // Calculate current stress score
+    float currentStress = calculateStressScore(normalizedGSR, heartRate, spo2, bodyTemp);
     
     // Update moving average
     stressHistory[stressIndex] = currentStress;
@@ -154,44 +229,11 @@ void loop() {
     // Update LED indicators
     updateLEDs(avgStress);
     
-    // Send data to Supabase (with normalized GSR value)
-    sendToSupabase(gsrValue, heartRate, spo2, bodyTemp, avgStress);
+    // Send data to Supabase (now including rawGSR)
+    sendToSupabase(rawGSR, normalizedGSR, heartRate, spo2, bodyTemp, avgStress, headbandConnected);
+    
+    // Update last data time
+    lastDataTime = millis();
     
     delay(10000);  // 10 seconds delay
-}
-
-void sendToSupabase(float gsr, int heartRate, int spo2, float temperature, float stressScore) {
-  if (WiFi.status() == WL_CONNECTED) {
-    HTTPClient http;
-    String url = String(supabaseUrl) + tableEndpoint;
-    http.begin(url);
-    http.addHeader("apikey", supabaseKey);
-    http.addHeader("Authorization", String("Bearer ") + supabaseKey);
-    http.addHeader("Content-Type", contentType);
-
-    // Normalize GSR to 0-100 range for database storage
-    float normalizedGsr = normalizeGSR(gsr);
-    
-    String payload = "[{\"user_id\": \"74acc9e1-3900-46d8-a7b8-4e385dbe08b7\", ";
-    payload += "\"gsr\": " + String(normalizedGsr, 2) + ", ";  // Send normalized value with 2 decimal places
-    payload += "\"heartbeat\": " + String(heartRate) + ", ";
-    payload += "\"spo2\": " + String(spo2) + ", ";
-    payload += "\"temperature\": " + String(temperature, 2) + ", ";
-    payload += "\"stress_score\": " + String(stressScore, 2) + "}]";
-
-    // Debug output
-    Serial.print("Raw GSR: ");
-    Serial.print(gsr);
-    Serial.print(" | Normalized GSR: ");
-    Serial.println(normalizedGsr);
-
-    int httpResponseCode = http.POST(payload);
-    Serial.print("POST Status: ");
-    Serial.println(httpResponseCode);
-    if (httpResponseCode > 0) {
-      String response = http.getString();
-      Serial.println(response);
-    }
-    http.end();
-  }
 }
