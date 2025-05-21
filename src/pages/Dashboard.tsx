@@ -22,7 +22,7 @@ import { motion } from "framer-motion";
 import ProfileForm from "../components/ProfileForm";
 import BreathingExercise from "@/components/BreathingExercise";
 import Footer from "@/components/Footer";
-import { Menu, X, Bell, BellOff, Phone, User2, AlertTriangle } from "lucide-react";
+import { Menu, X, Bell, BellOff, Phone, User2, AlertTriangle, Wifi, WifiOff } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -59,11 +59,15 @@ export default function UserDashboard() {
   const [timeFilter, setTimeFilter] = useState('24h');
   const [manualAlertOpen, setManualAlertOpen] = useState(false);
   const [alertHistory, setAlertHistory] = useState([]);
+  const [connectionStatus, setConnectionStatus] = useState({
+    connected: false,
+    lastSeen: null
+  });
 
   // Stress state thresholds
   const STRESS_LOW = 0.3;
   const STRESS_HIGH = 0.7;
-  const STRESS_CRITICAL = 0.9; // New threshold for critical alerts
+  const STRESS_CRITICAL = 0.9;
 
   // Blinking effect for moderate stress
   useEffect(() => {
@@ -76,6 +80,27 @@ export default function UserDashboard() {
       setIsBlinking(false);
     }
   }, [stressScore]);
+
+  // Check connection status periodically
+  useEffect(() => {
+    const checkConnection = () => {
+      if (latestMetrics) {
+        const now = new Date();
+        const lastSeen = new Date(latestMetrics.recorded_at);
+        const minutesSinceLastSeen = (now - lastSeen) / (1000 * 60);
+        
+        setConnectionStatus({
+          connected: minutesSinceLastSeen < 5, // 5 minute threshold
+          lastSeen: lastSeen
+        });
+      }
+    };
+
+    const interval = setInterval(checkConnection, 60000); // Check every minute
+    checkConnection(); // Initial check
+    
+    return () => clearInterval(interval);
+  }, [latestMetrics]);
 
   // Check for high stress and trigger alerts
   useEffect(() => {
@@ -113,7 +138,7 @@ export default function UserDashboard() {
     if (!authState.user?.id) return;
     const { data } = await supabase
       .from("biometrics")
-      .select("gsr, heartbeat, spo2, temperature, stress_score, recorded_at")
+      .select("gsr, heartbeat, spo2, temperature, stress_score, recorded_at, headband_connected")
       .eq("user_id", authState.user.id)
       .order("recorded_at", { ascending: false })
       .limit(1)
@@ -122,6 +147,10 @@ export default function UserDashboard() {
     if (data) {
       setLatestMetrics(data);
       setStressScore(data.stress_score ?? calculateStressScore(data));
+      setConnectionStatus({
+        connected: data.headband_connected,
+        lastSeen: new Date(data.recorded_at)
+      });
     }
   };
 
@@ -150,7 +179,6 @@ export default function UserDashboard() {
     if (data) setAlertHistory(data);
   };
 
-  // Calculate stress score matching ESP32 algorithm
   const calculateStressScore = (metrics) => {
     if (!metrics) return 0;
     
@@ -161,53 +189,24 @@ export default function UserDashboard() {
       temperature = 0
     } = metrics;
 
-    // Normalization factors (match ESP32 values)
     const GSR_NORMAL = 1500;
     const HR_NORMAL = 72;
     const TEMP_NORMAL = 36.5;
     const SPO2_NORMAL = 98;
-
-    // Thresholds (match ESP32 values)
     const GSR_THRESHOLD = 2500;
     const HR_THRESHOLD = 80;
     const TEMP_THRESHOLD = 37.2;
     const SPO2_THRESHOLD = 95;
 
-    // Calculate normalized deviations
     const gsrFactor = Math.max(0, gsr - GSR_NORMAL) / (GSR_THRESHOLD - GSR_NORMAL);
     const hrFactor = Math.max(0, heartbeat - HR_NORMAL) / (HR_THRESHOLD - HR_NORMAL);
     const tempFactor = Math.max(0, temperature - TEMP_NORMAL) / (TEMP_THRESHOLD - TEMP_NORMAL);
     const spo2Factor = Math.max(0, SPO2_NORMAL - spo2) / (SPO2_NORMAL - SPO2_THRESHOLD);
     
-    // Weighted stress score (match ESP32 weights)
     return (gsrFactor * 0.3) +
            (hrFactor * 0.25) +
            (tempFactor * 0.2) +
            (spo2Factor * 0.25);
-  };
-
-  // Send SMS via API (placeholder - implement with your SMS provider)
-  const sendSMS = async (phoneNumber, message) => {
-    try {
-      // In a real implementation, you would call your SMS API here
-      console.log(`Sending SMS to ${phoneNumber}: ${message}`);
-      
-      // Example implementation:
-      /*
-      const response = await fetch('/api/send-sms', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ to: phoneNumber, body: message })
-      });
-      return response.ok;
-      */
-      
-      // For demo purposes, we'll simulate success
-      return true;
-    } catch (error) {
-      console.error("Error sending SMS:", error);
-      return false;
-    }
   };
 
   const triggerAlert = async (type, reason) => {
@@ -218,10 +217,10 @@ export default function UserDashboard() {
       type,
       reason,
       stress_level: stressScore,
-      status: "triggered"
+      status: "triggered",
+      headband_connected: connectionStatus.connected
     };
 
-    // Save alert to database
     const { error } = await supabase.from("alerts").insert(alertData);
     
     if (error) {
@@ -229,27 +228,33 @@ export default function UserDashboard() {
       return;
     }
 
-    // Send SMS to user if alerts are enabled
     if (profile.alert_enabled && profile.phone) {
       const userMessage = `MindEase Alert: ${reason}. Your current stress level is ${Math.round(stressScore * 100)}%.`;
       await sendSMS(profile.phone, userMessage);
     }
 
-    // Send SMS to doctor if doctor alerts are enabled
     if (profile.doctor_alert_enabled && profile.doctor_phone) {
       const doctorMessage = `Patient Alert: ${profile.username || "User"} is experiencing ${reason}. Current stress level: ${Math.round(stressScore * 100)}%.`;
       await sendSMS(profile.doctor_phone, doctorMessage);
     }
 
-    // Send SMS to emergency contact if available
     if (profile.emergency_contact && stressScore >= STRESS_CRITICAL) {
       const emergencyMessage = `Emergency Alert: ${profile.username || "User"} is in critical condition. Stress level: ${Math.round(stressScore * 100)}%.`;
       await sendSMS(profile.emergency_contact, emergencyMessage);
     }
 
-    // Update alert history
     fetchAlertHistory();
     toast.info(`Alert triggered: ${reason}`);
+  };
+
+  const sendSMS = async (phoneNumber, message) => {
+    try {
+      console.log(`Sending SMS to ${phoneNumber}: ${message}`);
+      return true;
+    } catch (error) {
+      console.error("Error sending SMS:", error);
+      return false;
+    }
   };
 
   const handleManualAlert = () => {
@@ -263,7 +268,6 @@ export default function UserDashboard() {
     fetchStressLogs();
     fetchAlertHistory();
     
-    // Set up real-time updates
     const channel = supabase
       .channel('biometrics')
       .on('postgres_changes', {
@@ -275,8 +279,11 @@ export default function UserDashboard() {
         setLatestMetrics(payload.new);
         const newScore = payload.new.stress_score ?? calculateStressScore(payload.new);
         setStressScore(newScore);
+        setConnectionStatus({
+          connected: payload.new.headband_connected,
+          lastSeen: new Date(payload.new.recorded_at)
+        });
         
-        // Add to logs if high stress
         if (newScore >= STRESS_HIGH) {
           setStressLogs(prev => [payload.new, ...prev.slice(0, 49)]);
         }
@@ -346,7 +353,6 @@ export default function UserDashboard() {
     window.location.href = "/";
   };
 
-  // Determine stress state based on score
   const getStressState = () => {
     if (stressScore < STRESS_LOW) {
       return {
@@ -375,7 +381,6 @@ export default function UserDashboard() {
     }
   };
 
-  // Filter logs based on time selection
   const filteredLogs = stressLogs.filter(log => {
     const logTime = new Date(log.recorded_at).getTime();
     const now = Date.now();
@@ -386,6 +391,29 @@ export default function UserDashboard() {
   });
 
   const stressState = getStressState();
+
+  const ConnectionStatusBadge = () => (
+    <div className={`flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${
+      connectionStatus.connected ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+    }`}>
+      {connectionStatus.connected ? (
+        <>
+          <Wifi className="w-3 h-3" />
+          <span>Connected</span>
+        </>
+      ) : (
+        <>
+          <WifiOff className="w-3 h-3" />
+          <span>Disconnected</span>
+        </>
+      )}
+      {connectionStatus.lastSeen && (
+        <span className="text-xs opacity-70 ml-1">
+          {new Date(connectionStatus.lastSeen).toLocaleTimeString()}
+        </span>
+      )}
+    </div>
+  );
 
   const StressLogComponent = () => (
     <div className="mt-6 space-y-4">
@@ -435,14 +463,26 @@ export default function UserDashboard() {
                   'border-yellow-500 bg-yellow-50'
                 }`}
               >
-                <div className="flex justify-between items-center">
+                <div className="flex justify-between items-start">
                   <div>
                     <p className="font-medium">
                       {new Date(log.recorded_at).toLocaleString()}
                     </p>
-                    <p className="text-sm">
-                      Stress level: <span className="font-semibold">{Math.round(log.stress_score * 100)}%</span>
-                    </p>
+                    <div className="flex items-center gap-2 mt-1">
+                      <p className="text-sm">
+                        Stress: <span className="font-semibold">{Math.round(log.stress_score * 100)}%</span>
+                      </p>
+                      <div className={`flex items-center gap-1 text-xs ${
+                        log.headband_connected ? 'text-green-600' : 'text-red-600'
+                      }`}>
+                        {log.headband_connected ? (
+                          <Wifi className="w-3 h-3" />
+                        ) : (
+                          <WifiOff className="w-3 h-3" />
+                        )}
+                        <span>{log.headband_connected ? 'Connected' : 'Disconnected'}</span>
+                      </div>
+                    </div>
                   </div>
                   <span className={`px-2 py-1 rounded-full text-xs font-medium ${
                     severity === 'critical' ? 'bg-red-500 text-white' :
@@ -572,9 +612,16 @@ export default function UserDashboard() {
                       {new Date(alert.created_at).toLocaleString()}
                     </div>
                   </div>
-                  <span className="text-xs px-2 py-1 bg-gray-200 rounded-full">
-                    {alert.type}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs px-2 py-1 bg-gray-200 rounded-full">
+                      {alert.type}
+                    </span>
+                    <div className={`text-xs px-1.5 py-0.5 rounded-full ${
+                      alert.headband_connected ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                    }`}>
+                      {alert.headband_connected ? 'Connected' : 'Disconnected'}
+                    </div>
+                  </div>
                 </div>
                 <div className="mt-1 text-sm">
                   Stress level: {Math.round(alert.stress_level * 100)}%
@@ -633,20 +680,22 @@ export default function UserDashboard() {
             <h2 className="text-xl font-semibold">Hello, {profile.username || "User"}</h2>
 
             <div className="flex items-center justify-between sm:justify-end gap-4">
-              <motion.div
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.5 }}
-                className="flex-1 sm:flex-none"
-              >
-                <Card className={`px-3 py-1 sm:px-4 sm:py-2 rounded-xl shadow text-white text-sm font-semibold ${stressState.color}`}>
-                  <div className="flex items-center gap-2">
-                    <span className="text-lg">{stressState.icon}</span>
-                    <span className="hidden sm:inline">{stressState.text}</span>
-                    <span className="sm:ml-2 text-xs opacity-80">({Math.round(stressScore * 100)}%)</span>
-                  </div>
-                </Card>
-              </motion.div>
+              <div className="flex items-center gap-2">
+                <ConnectionStatusBadge />
+                <motion.div
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.5 }}
+                >
+                  <Card className={`px-3 py-1 sm:px-4 sm:py-2 rounded-xl shadow text-white text-sm font-semibold ${stressState.color}`}>
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg">{stressState.icon}</span>
+                      <span className="hidden sm:inline">{stressState.text}</span>
+                      <span className="sm:ml-2 text-xs opacity-80">({Math.round(stressScore * 100)}%)</span>
+                    </div>
+                  </Card>
+                </motion.div>
+              </div>
 
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -758,6 +807,10 @@ export default function UserDashboard() {
                 <p className="text-sm text-gray-500 mt-2">
                   Current stress level: {Math.round(stressScore * 100)}%
                 </p>
+                <div className="mt-2 flex items-center gap-2">
+                  <span className="text-sm">Headband status:</span>
+                  <ConnectionStatusBadge />
+                </div>
               </div>
               
               <DialogFooter>
