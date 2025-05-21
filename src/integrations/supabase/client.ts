@@ -2,8 +2,8 @@
 import { createClient } from '@supabase/supabase-js';
 import type { Database } from './types';
 
-const SUPABASE_URL = "";
-const SUPABASE_PUBLISHABLE_KEY = "";
+const SUPABASE_URL = "https://eubfseugwxchapicdfqe.supabase.co";
+const SUPABASE_PUBLISHABLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV1YmZzZXVnd3hjaGFwaWNkZnFlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDc1Nzk0NjAsImV4cCI6MjA2MzE1NTQ2MH0.y8WFObtR92mUCxfycJFc9Znto96fsxCTWd9EOi33FN4";
 
 // Import the supabase client like this:
 // import { supabase } from "@/integrations/supabase/client";
@@ -19,7 +19,7 @@ async function signInWithGoogle() {
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: 'google',
     options: {
-      redirectTo: '' // or your callback URL
+      redirectTo: 'https://eubfseugwxchapicdfqe.supabase.co/auth/v1/callback' // or your callback URL
     }
   })
   
